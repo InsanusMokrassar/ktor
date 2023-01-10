@@ -1,8 +1,8 @@
 /*
- * Copyright 2014-2019 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2014-2023 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
  */
 
-package io.ktor.server.plugins
+package io.ktor.server.plugins.contentnegotiation
 
 import io.ktor.client.call.*
 import io.ktor.client.request.*
@@ -121,5 +121,87 @@ class ContentNegotiationTest {
         }
         val response = client.get("/").bodyAsText()
         assertEquals("""{"x": 123}""", response)
+    }
+
+    object OK
+
+    @Test
+    fun testMultipleConverters() = testApplication {
+        var nullSerialized = false
+        var nullDeserialized = false
+        var okSerialized = false
+        var okDeserialized = false
+
+        application {
+            routing {
+                install(ContentNegotiation) {
+                    val nullConverter = object : ContentConverter {
+                        override suspend fun serializeNullable(
+                            contentType: ContentType,
+                            charset: Charset,
+                            typeInfo: TypeInfo,
+                            value: Any?
+                        ): OutgoingContent? {
+                            nullSerialized = true
+                            return null
+                        }
+
+                        override suspend fun deserialize(
+                            charset: Charset,
+                            typeInfo: TypeInfo,
+                            content: ByteReadChannel
+                        ): Any? {
+                            nullDeserialized = true
+                            return null
+                        }
+                    }
+                    val okConverter = object : ContentConverter {
+                        override suspend fun serializeNullable(
+                            contentType: ContentType,
+                            charset: Charset,
+                            typeInfo: TypeInfo,
+                            value: Any?
+                        ): OutgoingContent {
+                            okSerialized = true
+                            return TextContent("OK", contentType)
+                        }
+
+                        override suspend fun deserialize(
+                            charset: Charset,
+                            typeInfo: TypeInfo,
+                            content: ByteReadChannel
+                        ): Any {
+                            okDeserialized = true
+                            return OK
+                        }
+                    }
+
+                    register(ContentType.Application.Json, nullConverter)
+                    register(ContentType.Application.Json, okConverter)
+                }
+
+
+                get("/FOO") {
+                    try {
+                        call.receive<OK>()
+                        call.respond(OK)
+                    } catch (cause: Throwable) {
+                        call.respond(cause)
+                    }
+                }
+            }
+        }
+
+        val response = client.get("FOO") {
+            accept(ContentType.Application.Json)
+            contentType(ContentType.Application.Json)
+        }
+
+        assertEquals("OK", response.bodyAsText())
+
+        assertTrue(nullSerialized)
+        assertTrue(nullDeserialized)
+        assertTrue(okSerialized)
+        assertTrue(okDeserialized)
     }
 }
