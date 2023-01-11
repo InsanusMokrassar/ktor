@@ -12,12 +12,14 @@ import io.netty.util.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import java.lang.Integer.*
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.*
 
 internal class RequestBodyHandler(
     val context: ChannelHandlerContext
 ) : ChannelInboundHandlerAdapter(), CoroutineScope {
     private val handlerJob = CompletableDeferred<Nothing>()
+    private val buffersInProcessingCount = AtomicInteger(0)
 
     private val queue = Channel<Any>(Channel.UNLIMITED)
 
@@ -137,7 +139,9 @@ internal class RequestBodyHandler(
     }
 
     private fun requestMoreEvents() {
-        context.read()
+        if (buffersInProcessingCount.decrementAndGet() == 0) {
+            context.read()
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -169,6 +173,7 @@ internal class RequestBodyHandler(
     }
 
     private fun handleBytesRead(content: ReferenceCounted) {
+        buffersInProcessingCount.incrementAndGet()
         if (!queue.trySend(content).isSuccess) {
             content.release()
             throw IllegalStateException("Unable to process received buffer: queue offer failed")
